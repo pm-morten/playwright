@@ -17,9 +17,22 @@
 
 import { test as it, expect } from './pageTest';
 
-it('LO-052 should work @smoke', async ({ page, server }) => {
+it('LO-052 should work @smoke', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43849' } }, async ({ page, server }) => {
   await page.goto(server.PREFIX + '/input/button.html');
   const button = page.locator('button');
+  page.setDefaultTimeout(1);
+  expect(await button.isClickable()).toBe(true);
+  page.setDefaultTimeout(0);
+  expect(await page.evaluate(() => window['result'])).toBe('Was not clicked');
+  await button.evaluate((button: HTMLButtonElement) => button.disabled = true);
+  expect(await button.isClickable()).toBe(false);
+  await button.evaluate((button: HTMLButtonElement) => {
+    button.disabled = false;
+    button.style.display = 'none';
+  });
+  expect(await button.isClickable()).toBe(false);
+  expect(await page.locator('missing').isClickable()).toBe(false);
+  await button.evaluate(button => button.style.display = '');
   await button.click();
   expect(await page.evaluate(() => window['result'])).toBe('Clicked');
 });

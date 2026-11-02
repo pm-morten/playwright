@@ -216,6 +216,10 @@ export class FrameDispatcher extends Dispatcher<Frame, channels.FrameChannel, Br
     return { value: await this._frame.isEditable(progress, params) };
   }
 
+  async isClickable(params: channels.FrameIsClickableParams, progress: Progress): Promise<channels.FrameIsClickableResult> {
+    return { value: await this._frame.isClickable(progress, params) };
+  }
+
   async isEnabled(params: channels.FrameIsEnabledParams, progress: Progress): Promise<channels.FrameIsEnabledResult> {
     return { value: await this._frame.isEnabled(progress, params) };
   }

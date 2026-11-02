@@ -111,6 +111,15 @@ The opposite of [`method: LocatorAssertions.toBeChecked`].
 ### option: LocatorAssertions.NotToBeChecked.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.18
 
+## async method: LocatorAssertions.NotToBeClickable
+* since: v1.65
+* langs: python
+
+The opposite of [`method: LocatorAssertions.toBeClickable`].
+
+### option: LocatorAssertions.NotToBeClickable.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.65
+
 ## async method: LocatorAssertions.NotToBeDisabled
 * since: v1.20
 * langs: python
@@ -612,6 +621,35 @@ This option can't be true when [`option: LocatorAssertions.toBeChecked.checked`]
 
 ### option: LocatorAssertions.toBeChecked.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.18
+
+## async method: LocatorAssertions.toBeClickable
+* since: v1.65
+* langs:
+  - alias-java: isClickable
+
+Ensures that the element can be clicked. Retries checks that the element is [visible](../actionability.md#visible),
+[stable](../actionability.md#stable), [enabled](../actionability.md#enabled) and
+[receives pointer events](../actionability.md#receives-events), but does not click the element.
+
+This assertion checks whether a click can reach the element, not whether every part of it is unobscured. An element
+that does not exist is not clickable.
+
+**Usage**
+
+```js
+await expect(page.getByRole('button', { name: 'Submit' })).toBeClickable();
+```
+
+The checks may scroll the element into view.
+
+### option: LocatorAssertions.toBeClickable.timeout = %%-js-assertions-timeout-%%
+* since: v1.65
+
+### option: LocatorAssertions.toBeClickable.signal = %%-js-assertions-signal-%%
+* since: v1.65
+
+### option: LocatorAssertions.toBeClickable.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.65
 
 ## async method: LocatorAssertions.toBeDisabled
 * since: v1.20

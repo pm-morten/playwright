@@ -52,6 +52,17 @@ type PointerAction = {
   perform: (progress: Progress, point: types.Point) => Promise<void>,
 };
 
+// By default, we scroll with protocol method to reveal the action point.
+// However, that might not work to scroll from under position:sticky elements
+// that overlay the target element. To fight this, we cycle through different
+// scroll alignments. This works in most scenarios.
+const pointerActionScrollOptions: (ScrollIntoViewOptions | undefined)[] = [
+  undefined,
+  { block: 'end', inline: 'end' },
+  { block: 'center', inline: 'center' },
+  { block: 'start', inline: 'start' },
+];
+
 export class NonRecoverableDOMError extends Error {
 }
 
@@ -379,17 +390,7 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
 
   async _retryPointerAction(progress: Progress, action: PointerAction, options: types.PointerActionOptions & types.PointerActionWaitOptions, frameVisible: boolean): Promise<'error:notconnected' | 'done'> {
     return await this._retryAction(progress, action.name, async (progress, retry) => {
-      // By default, we scroll with protocol method to reveal the action point.
-      // However, that might not work to scroll from under position:sticky elements
-      // that overlay the target element. To fight this, we cycle through different
-      // scroll alignments. This works in most scenarios.
-      const scrollOptions: (ScrollIntoViewOptions | undefined)[] = [
-        undefined,
-        { block: 'end', inline: 'end' },
-        { block: 'center', inline: 'center' },
-        { block: 'start', inline: 'start' },
-      ];
-      const forceScrollOptions = scrollOptions[retry % scrollOptions.length];
+      const forceScrollOptions = pointerActionScrollOptions[retry % pointerActionScrollOptions.length];
       return await this._performPointerAction(progress, action, forceScrollOptions, options, frameVisible);
     }, { trial: options.trial, force: options.force, skipActionPreChecks: action.skipActionPreChecks });
   }
@@ -545,13 +546,23 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
     return assertDone(throwRetargetableDOMError(result));
   }
 
-  _click(progress: Progress, options: types.MouseClickOptions & types.PointerActionWaitOptions, waitAfter: boolean | 'disabled', frameVisible: boolean): Promise<'error:notconnected' | 'done'> {
-    return this._retryPointerAction(progress, {
+  _click(progress: Progress, options: types.MouseClickOptions & types.PointerActionWaitOptions, waitAfter: boolean | 'disabled', frameVisible: boolean): Promise<'error:notconnected' | 'done'>;
+  _click(progress: Progress, options: types.MouseClickOptions & types.PointerActionWaitOptions, waitAfter: boolean | 'disabled', frameVisible: boolean, retry: number): Promise<PerformActionResult>;
+  _click(progress: Progress, options: types.MouseClickOptions & types.PointerActionWaitOptions, waitAfter: boolean | 'disabled', frameVisible: boolean, retry?: number): Promise<PerformActionResult> {
+    const action: PointerAction = {
       name: 'click',
       waitForEnabled: true,
       waitAfter,
       perform: (progress, point) => this._page.mouse.click(progress, point.x, point.y, options),
-    }, options, frameVisible);
+    };
+    // Assertions supply their own retry loop and scroll alignment index.
+    if (retry !== undefined) {
+      if (!frameVisible)
+        return Promise.resolve({ missingState: 'visible' });
+      const forceScrollOptions = pointerActionScrollOptions[retry % pointerActionScrollOptions.length];
+      return this._performPointerAction(progress, action, forceScrollOptions, options, frameVisible);
+    }
+    return this._retryPointerAction(progress, action, options, frameVisible);
   }
 
   async dblclick(progress: Progress, options: types.MouseClickOptions & types.PointerActionWaitOptions): Promise<void> {

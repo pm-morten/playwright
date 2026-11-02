@@ -96,13 +96,21 @@ it('CL-099 should scroll into view span element', async ({ page, isAndroid }) =>
 
 it('CL-100 should scroll into view element in iframe', async ({ page, isAndroid, server, browserName }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/27196' });
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43849' });
   it.fixme(isAndroid);
   await page.goto(server.EMPTY_PAGE);
   await page.setContent(`
     <div id=big style="height: 10000px;"></div>
     <iframe src='${server.CROSS_PROCESS_PREFIX}/input/button.html'></iframe>
   `);
-  await page.frameLocator('iframe').getByRole('button').click({ timeout: 5000 });
+  const button = page.frameLocator('iframe').getByRole('button');
+  await expect(button).toBeAttached();
+  expect(await button.isClickable()).toBe(true);
+  await page.locator('iframe').evaluate(iframe => iframe.style.display = 'none');
+  expect(await button.isClickable()).toBe(false);
+  await expect(button).not.toBeClickable();
+  await page.locator('iframe').evaluate(iframe => iframe.style.display = '');
+  await button.click({ timeout: 5000 });
 });
 
 it('CL-101 should not scroll the page when scroll is "none"', async ({ page }) => {
@@ -159,6 +167,7 @@ it('CL-104 should not scroll on hover when scroll is "none"', async ({ page }) =
 
 it('CL-105 should scroll instantly on retry when scroll-behavior is smooth', async ({ page }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/42625' });
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43849' });
   // The fixed header covers everything but the bottom strip of the viewport.
   // The first attempt centers the button under the header, so the click is
   // retried with a different scroll alignment using the native scrollIntoView().
@@ -179,6 +188,8 @@ it('CL-105 should scroll instantly on retry when scroll-behavior is smooth', asy
       addEventListener('scroll', () => window.scrolls.push(window.scrollY));
     </script>
   `);
+  await expect(page.locator('button')).toBeClickable();
+  expect(await page.evaluate('window.clicked')).toBeFalsy();
   await page.click('button');
   expect(await page.evaluate('window.clicked')).toBe(true);
   // Every scroll performed by Playwright should be a single instant jump,

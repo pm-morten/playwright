@@ -17,6 +17,32 @@
 import { stripAnsi } from '../config/utils';
 import { test, expect } from './pageTest';
 
+test('EX-329 toBeClickable checks occlusion without clicking', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43849' } }, async ({ page }) => {
+  await page.setContent(`
+    <button onclick="this.textContent = 'Clicked'">Submit</button>
+    <div id="overlay" style="position: fixed; inset: 0; background: white"></div>
+  `);
+  const button = page.getByRole('button');
+  const overlay = page.locator('#overlay');
+  expect(await button.isClickable()).toBe(false);
+  await expect(button).toBeVisible();
+  await expect(button).not.toBeClickable();
+  const error = await expect(button).toBeClickable({ timeout: 1000 }).catch(e => e);
+  expect(stripAnsi(error.message)).toContain('Expected: clickable');
+  expect(stripAnsi(error.message)).toContain('Received: not clickable');
+  expect(stripAnsi(error.message)).toContain('intercepts pointer events');
+
+  await overlay.evaluate(element => setTimeout(() => element.style.pointerEvents = 'none', 200));
+  await expect(button).toBeClickable();
+  expect(await button.isClickable()).toBe(true);
+  const notError = await expect(button).not.toBeClickable({ timeout: 1000 }).catch(e => e);
+  expect(stripAnsi(notError.message)).toContain('Expected: not clickable');
+  await overlay.evaluate(element => setTimeout(() => element.style.pointerEvents = 'auto', 200));
+  await expect(button).not.toBeClickable();
+  await expect(button).toHaveText('Submit');
+  await expect(page.locator('missing')).not.toBeClickable();
+});
+
 test.describe('toBeChecked', () => {
   test('EX-001 default', async ({ page }) => {
     await page.setContent('<input type=checkbox checked></input>');

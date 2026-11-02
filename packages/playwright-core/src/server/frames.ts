@@ -69,6 +69,8 @@ type ConsoleTagHandler = () => void;
 
 type RegularLifecycleEvent = Exclude<types.LifecycleEvent, 'networkidle'>;
 
+type ExpectEvaluator = (progress: Progress, retry: number) => Promise<{ matches: boolean, received?: ExpectReceived, log?: string } | null>;
+
 export type FunctionWithSource = (source: { context: BrowserContext, page: Page, frame: Frame}, ...args: any) => any;
 
 export type NavigationEvent = {
@@ -1401,6 +1403,30 @@ export class Frame extends SdkObject<FrameEventMap> {
     return !(await this.isVisible(progress, target));
   }
 
+  async isClickable(progress: Progress, target: types.SelectorTarget): Promise<boolean> {
+    await this._page.performActionPreChecks(progress);
+    return (await this._checkClickability(progress, target))?.matches ?? false;
+  }
+
+  private async _checkClickability(progress: Progress, target: types.SelectorTarget, retry = 0) {
+    const resolved = await progress.race(this.selectors.callOnSelectorHandle({ ...target, markTargets: 'all' }, ({ elements }) => elements[0] as Element, {}));
+    if (!resolved)
+      return null;
+    const handle = resolved.result;
+    try {
+      const result = await handle._click(progress, { trial: true }, 'disabled', resolved.frameVisible, retry);
+      let log: string | undefined;
+      if (typeof result === 'object' && 'hitTargetDescription' in result)
+        log = `  ${result.hitTargetDescription} intercepts pointer events`;
+      else if (typeof result === 'object' && 'missingState' in result)
+        log = `  element is not ${result.missingState}`;
+      const matches = result === 'done';
+      return { matches, received: { value: matches ? 'clickable' : 'not clickable' }, log };
+    } finally {
+      handle.dispose();
+    }
+  }
+
   async isDisabled(progress: Progress, target: types.SelectorTarget): Promise<boolean> {
     return this._elementState(progress, target, 'disabled');
   }
@@ -1480,6 +1506,10 @@ export class Frame extends SdkObject<FrameEventMap> {
     }
     // `isSet` distinguishes "not collected yet" from "collected with received: undefined".
     const lastIntermediateResult: { isSet: boolean, received?: ExpectReceived, errorMessage?: string } = { isSet: false };
+    const effectiveSelector = selector ?? (options.expression === 'to.match.aria' ? 'body' : ':root');
+    const evaluate: ExpectEvaluator = options.expression === 'to.be.clickable'
+      ? (progress, retry) => this._checkClickability(progress, { selector: effectiveSelector, strict: true }, retry)
+      : progress => this._expectInBrowser(progress, effectiveSelector, options);
     try {
       // Step 1: perform locator handlers checkpoint with a specified timeout.
       if (selector)
@@ -1490,7 +1520,7 @@ export class Frame extends SdkObject<FrameEventMap> {
       // Supports the case of `expect(locator).toBeVisible({ timeout: 1 })`
       // that should succeed when the locator is already visible.
       try {
-        const resultOneShot = await this._expectInternal(progress, selector, options, lastIntermediateResult, true);
+        const resultOneShot = await this._expectInternal(progress, options, evaluate, lastIntermediateResult, true);
         if (resultOneShot.matches !== options.isNot)
           return;
       } catch (e) {
@@ -1500,9 +1530,10 @@ export class Frame extends SdkObject<FrameEventMap> {
       }
 
       // Step 3: auto-retry expect with increasing timeouts. Bounded by the total remaining time.
+      let retry = 0;
       await this.retryWithProgressAndBackoff(progress, async (progress, continuePolling) => {
         await this._page.performActionPreChecks(progress);
-        const { matches, received } = await this._expectInternal(progress, selector, options, lastIntermediateResult, false);
+        const { matches, received } = await this._expectInternal(progress, options, evaluate, lastIntermediateResult, false, ++retry);
         if (matches === options.isNot) {
           // Keep waiting in these cases:
           // expect(locator).conditionThatDoesNotMatch
@@ -1532,33 +1563,39 @@ export class Frame extends SdkObject<FrameEventMap> {
     }
   }
 
-  private async _expectInternal(progress: Progress, selector: string | undefined, options: FrameExpectParams, lastIntermediateResult: { received?: ExpectReceived, isSet: boolean, errorMessage?: string }, noAbort: boolean) {
-    const progressLog = (text: string) => progress.log(text);
-    // The first expect check, a.k.a. one-shot, always finishes - even when progress is aborted.
-    if (noAbort)
-      progress = nullProgress;
+  private async _expectInBrowser(progress: Progress, selector: string, options: FrameExpectParams) {
     const mainWorld = options.expression === 'to.have.property';
     const isArray = options.expression === 'to.have.count' || options.expression.endsWith('.array');
-    const effectiveSelector = selector ?? (options.expression === 'to.match.aria' ? 'body' : ':root');
-
-    let received: ExpectReceived | undefined;
-    let matches = options.isNot;
-    let missingReceived = false;
-
     // Non-array expectations are strict (callOnSelector throws on multiple); array ones are not.
-    const resolved = await progress.race(this.selectors.callOnSelector({ selector: effectiveSelector, strict: !isArray, mainWorld, markTargets: 'all' }, async ({ injected, elements, frameVisible }, options) => {
+    const resolved = await progress.race(this.selectors.callOnSelector({ selector, strict: !isArray, mainWorld, markTargets: 'all' }, async ({ injected, elements, frameVisible }, options) => {
       const isArray = options.expression === 'to.have.count' || options.expression.endsWith('.array');
       const log = isArray
         ? `  locator resolved to ${elements.length} element${elements.length === 1 ? '' : 's'}`
         : `  locator resolved to ${injected.previewNode(elements[0])}`;
       return { log, ...await injected.expect(elements[0], options, elements, frameVisible) };
     }, options));
+    return resolved?.result ?? null;
+  }
 
-    if (resolved) {
-      received = resolved.result.received;
-      matches = resolved.result.matches;
-      if (resolved.result.log)
-        progressLog(resolved.result.log);
+  private async _expectInternal(progress: Progress, options: FrameExpectParams, evaluate: ExpectEvaluator, lastIntermediateResult: { received?: ExpectReceived, isSet: boolean, errorMessage?: string }, noAbort: boolean, retry = 0) {
+    const progressLog = (text: string) => progress.log(text);
+    // The first expect check, a.k.a. one-shot, always finishes - even when progress is aborted.
+    if (noAbort)
+      progress = nullProgress;
+    const mainWorld = options.expression === 'to.have.property';
+    const isArray = options.expression === 'to.have.count' || options.expression.endsWith('.array');
+
+    let received: ExpectReceived | undefined;
+    let matches = options.isNot;
+    let missingReceived = false;
+
+    const result = await evaluate(progress, retry);
+
+    if (result) {
+      received = result.received;
+      matches = result.matches;
+      if (result.log)
+        progressLog(result.log);
     } else {
       // When no elements matched the selector, some assertions can still pass.
       if (options.expression === 'to.have.count') {
@@ -1572,6 +1609,8 @@ export class Frame extends SdkObject<FrameEventMap> {
       } else if (!options.isNot && options.expression === 'to.be.hidden') {
         matches = true;
       } else if (options.isNot && options.expression === 'to.be.visible') {
+        matches = false;
+      } else if (options.isNot && options.expression === 'to.be.clickable') {
         matches = false;
       } else if (!options.isNot && options.expression === 'to.be.detached') {
         matches = true;
