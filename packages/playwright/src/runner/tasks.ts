@@ -25,13 +25,14 @@ import { removeFolders } from '@utils/fileUtils';
 
 import { Dispatcher  } from './dispatcher';
 import { collectProjectsAndTestFiles, createRootSuite, loadFileSuites, loadGlobalHook, loadTestList } from './loadUtils';
-import { buildDependentProjects, buildTeardownToSetupsMap, filterProjects } from './projectUtils';
+import { buildDependentProjects, buildProjectsClosure, buildTeardownToSetupsMap, filterProjects } from './projectUtils';
 import { applySuggestedRebaselines, clearSuggestedRebaselines } from './rebase';
 import { TaskRunner } from './taskRunner';
 import { detectChangedTestFiles } from './vcs';
 import { cc, config as commonConfig, FullConfigInternal, suiteUtils, test as testNs } from '../common';
 import { createTestGroups, shuffleTestGroups } from '../runner/testGroups';
 import { createTitleMatcher, forceRegExp, removeDirAndLogToConsole } from '../util';
+import { webServerPluginsForProject } from '../plugins/webServerPlugin';
 
 import type { TestGroup } from '../runner/testGroups';
 import type { EnvByProjectId } from './dispatcher';
@@ -164,10 +165,31 @@ export function createGlobalSetupTasks(config: FullConfigInternal) {
 
 export function createRunTestsTasks(config: FullConfigInternal) {
   return [
+    ...createProjectWebServerSetupTasks(config),
     createPhasesTask(),
     createReportBeginTask(),
     createRunTestsTask(),
   ];
+}
+
+function createProjectWebServerSetupTasks(config: FullConfigInternal): Task<TestRun>[] {
+  return config.projects.flatMap(project => webServerPluginsForProject(project.project).map(plugin => {
+    let started = false;
+    return {
+      title: 'project web server setup',
+      setup: async ({ rootSuite, reporter }) => {
+        const projects = buildProjectsClosure(rootSuite!.suites.map(suite => suite._fullProject!));
+        if (!projects.has(project))
+          return;
+        started = true;
+        await plugin.setup?.(config.config, config.configDir, reporter);
+      },
+      teardown: async () => {
+        if (started)
+          await plugin.teardown?.();
+      },
+    };
+  }));
 }
 
 export function createClearCacheTask(config: FullConfigInternal): Task<TestRun> {

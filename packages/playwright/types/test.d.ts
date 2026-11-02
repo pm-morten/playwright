@@ -70,6 +70,9 @@ type UseOptions<TestArgs, WorkerArgs> = Partial<WorkerArgs> & Partial<TestArgs>;
  * [configuration file](https://playwright.dev/docs/test-configuration). Note that all properties of
  * [TestProject](https://playwright.dev/docs/api/class-testproject) are available in the top-level
  * [TestConfig](https://playwright.dev/docs/api/class-testconfig), in which case they are shared between all projects.
+ * The exception is
+ * [testProject.webServer](https://playwright.dev/docs/api/class-testproject#test-project-web-server): top-level
+ * servers are started separately, for the whole run.
  *
  * Here is an example configuration that runs every test in Chromium, Firefox and WebKit, both Desktop and Mobile
  * versions.
@@ -139,6 +142,55 @@ interface TestProject<TestArgs = {}, WorkerArgs = {}> {
    * all projects.
    */
   use?: UseOptions<TestArgs, WorkerArgs>;
+  /**
+   * Launch a development web server (or multiple) for this project. Accepts the same options as
+   * [testConfig.webServer](https://playwright.dev/docs/api/class-testconfig#test-config-web-server).
+   *
+   * Project servers are added to the top-level servers, not inherited from them or used to replace them. They start
+   * after tests have been loaded, filtered and sharded, before any project runs. Only servers for projects in the run,
+   * including their dependencies and teardown projects, are started. Listing tests does not start project servers. Each
+   * server is stopped after the run, including in UI mode and VS Code, where it is started again for the next run that
+   * needs it.
+   *
+   * [fullProject.webServer](https://playwright.dev/docs/api/class-fullproject#full-project-web-server) exposes these
+   * settings as an array, including in `globalSetup`. Project servers are not running during `globalSetup` or
+   * `globalTeardown`. Use a [setup project](https://playwright.dev/docs/test-global-setup-teardown#option-1-project-dependencies) for setup
+   * that needs them, or [testConfig.webServer](https://playwright.dev/docs/api/class-testconfig#test-config-web-server)
+   * for a server needed by global hooks.
+   *
+   * For a single server with `port` and no `url`, the project's
+   * [testOptions.baseURL](https://playwright.dev/docs/api/class-testoptions#test-options-base-url) defaults to
+   * `http://localhost:<port>`. An explicitly configured `baseURL` takes precedence. For arrays or servers with `url`,
+   * configure `baseURL` explicitly.
+   *
+   * **Usage**
+   *
+   * ```js
+   * // playwright.config.ts
+   * import { defineConfig } from '@playwright/test';
+   *
+   * export default defineConfig({
+   *   projects: [
+   *     {
+   *       name: 'local',
+   *       webServer: {
+   *         command: 'npm run start',
+   *         url: 'http://localhost:3000',
+   *         reuseExistingServer: !process.env.CI,
+   *       },
+   *       use: { baseURL: 'http://localhost:3000' },
+   *     },
+   *     {
+   *       name: 'production',
+   *       use: { baseURL: 'https://production.example' },
+   *     },
+   *   ],
+   * });
+   * ```
+   *
+   * Running `npx playwright test --project=production` does not start the local server.
+   */
+  webServer?: TestConfigWebServer | TestConfigWebServer[];
   /**
    * Whether the project runs when no `--project` command line option is passed. Defaults to `true`.
    *
@@ -819,6 +871,13 @@ export interface FullProject<TestArgs = {}, WorkerArgs = {}> {
    */
   use: UseOptions<PlaywrightTestOptions & TestArgs, PlaywrightWorkerOptions & WorkerArgs>;
   /**
+   * The servers configured in
+   * [testProject.webServer](https://playwright.dev/docs/api/class-testproject#test-project-web-server), normalized to
+   * an array. Does not include top-level servers. This property is an empty array in merged reports because server
+   * configuration is not serialized.
+   */
+  webServer: TestConfigWebServer[];
+  /**
    * See [testProject.dependencies](https://playwright.dev/docs/api/class-testproject#test-project-dependencies).
    */
   dependencies: Array<string>;
@@ -989,6 +1048,10 @@ interface TestConfig<TestArgs = {}, WorkerArgs = {}> {
   use?: UseOptions<TestArgs, WorkerArgs>;
   /**
    * Launch a development web server (or multiple) during the tests.
+   *
+   * Top-level servers start before `globalSetup` and stop after `globalTeardown`, regardless of project selection. To
+   * start servers only for particular projects, use
+   * [testProject.webServer](https://playwright.dev/docs/api/class-testproject#test-project-web-server).
    *
    * **Details**
    *

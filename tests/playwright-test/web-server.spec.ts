@@ -613,6 +613,99 @@ test('should create multiple servers', async ({ runInlineTest }, { workerIndex }
   expect(actualLogMessages).toStrictEqual(expectedLogMessages);
 });
 
+test('should start servers only for projects in the run', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43853' },
+}, async ({ runInlineTest }, { workerIndex }) => {
+  const port = workerIndex * 3 + 11500;
+  const files = {
+    'playwright.config.ts': `
+      import { defineConfig } from '@playwright/test';
+      export default defineConfig({
+        webServer: {
+          command: 'node ${JSON.stringify(SIMPLE_SERVER_PATH)} ${port}',
+          url: 'http://localhost:${port}/hello',
+          name: 'Shared',
+          stdout: 'pipe',
+        },
+        globalSetup: './global-setup.ts',
+        projects: [
+          {
+            name: 'setup',
+            testMatch: 'setup.ts',
+            default: false,
+            webServer: [{
+              command: 'node ${JSON.stringify(SIMPLE_SERVER_PATH)} ${port + 1}',
+              url: 'http://localhost:${port + 1}/hello',
+              name: 'Mock',
+              stdout: 'pipe',
+            }],
+          },
+          {
+            name: 'functional',
+            testMatch: 'functional.spec.ts',
+            dependencies: ['setup'],
+            webServer: {
+              command: 'node ${JSON.stringify(SIMPLE_SERVER_PATH)} ${port + 2}',
+              port: ${port + 2},
+              name: 'Local',
+              stdout: 'pipe',
+            },
+          },
+          {
+            name: 'smoke',
+            testMatch: 'smoke.spec.ts',
+            use: { baseURL: 'https://production.example' },
+          },
+        ],
+      });
+    `,
+    'global-setup.ts': `
+      import { expect } from '@playwright/test';
+      export default async config => {
+        expect(config.projects.find(p => p.name === 'functional').webServer[0].port).toBe(${port + 2});
+        expect(config.projects.find(p => p.name === 'setup').webServer[0].url).toBe('http://localhost:${port + 1}/hello');
+      };
+    `,
+    'setup.ts': `
+      import { test, expect } from '@playwright/test';
+      test('setup', async ({ request }) => {
+        expect((await request.get('http://localhost:${port + 1}/hello')).ok()).toBe(true);
+      });
+    `,
+    'functional.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('local', async ({ baseURL, request }) => {
+        expect(baseURL).toBe('http://localhost:${port + 2}');
+        expect(await (await request.get('/port')).text()).toBe('${port + 2}');
+        expect((await request.get('http://localhost:${port + 1}/hello')).ok()).toBe(true);
+      });
+    `,
+    'smoke.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('production', async ({ baseURL }) => {
+        expect(baseURL).toBe('https://production.example');
+      });
+    `,
+  };
+  const smoke = await runInlineTest(files, { project: 'smoke' });
+  expect(smoke.exitCode).toBe(0);
+  expect(smoke.passed).toBe(1);
+  expect(smoke.output).toContain('[Shared] listening');
+  expect(smoke.output).not.toContain('[Local]');
+  expect(smoke.output).not.toContain('[Mock]');
+
+  const local = await runInlineTest({}, { project: 'functional' });
+  expect(local.exitCode).toBe(0);
+  expect(local.passed).toBe(2);
+  expect(local.output.match(/\[Local\] listening/g)).toHaveLength(1);
+  expect(local.output.match(/\[Mock\] listening/g)).toHaveLength(1);
+
+  const emptyShard = await runInlineTest({}, { project: 'functional', shard: '2/2' });
+  expect(emptyShard.exitCode).toBe(0);
+  expect(emptyShard.output).not.toContain('[Local]');
+  expect(emptyShard.output).not.toContain('[Mock]');
+});
+
 test.describe('baseURL with plugins', () => {
   test('plugins do not set it', async ({ runInlineTest }, { workerIndex }) => {
     const port = workerIndex * 2 + 10500;

@@ -17,6 +17,7 @@
 // @ts-nocheck
 
 import path from 'path';
+import { stripVTControlCharacters } from 'util';
 
 import { test as baseTest, expect } from './ui-mode-fixtures';
 import { TestServerConnection } from '../../packages/playwright/lib/isomorphic';
@@ -223,6 +224,57 @@ test('stdio interception', async ({ startTestServer, writeFiles }) => {
     ['stdio', { type: 'stderr', text: 'this goes to stderr\n' }],
     ['stdio', { type: 'stdout', text: 'this goes to stdout\n' }]
   ]));
+});
+
+test('project web servers follow the tests selected for each run', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/43853' },
+}, async ({ startTestServer, writeFiles }) => {
+  const port = test.info().workerIndex * 2 + 12500;
+  const simpleServerPath = path.join(__dirname, 'assets', 'simple-server.js');
+  await writeFiles({
+    'playwright.config.ts': `
+      export default {
+        projects: [
+          {
+            name: 'local',
+            webServer: {
+              command: 'node ${JSON.stringify(simpleServerPath)} ${port}',
+              port: ${port},
+              stdout: 'pipe',
+            },
+          },
+          { name: 'production', use: { baseURL: 'https://production.example' } },
+        ],
+      };
+    `,
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('connect', async ({ request, baseURL }, testInfo) => {
+        if (testInfo.project.name === 'local') {
+          expect(baseURL).toBe('http://localhost:${port}');
+          expect(await (await request.get('/hello')).text()).toBe('hello');
+        } else {
+          expect(baseURL).toBe('https://production.example');
+        }
+      });
+    `,
+  });
+  const connection = await startTestServer();
+  await connection.initialize({ interceptStdio: true });
+  const listed = await connection.listTests({});
+  expect((await connection.runGlobalSetup({})).status).toBe('passed');
+  expect(connection.events.filter(e => e[0] === 'stdio' && e[1].text?.includes('[WebServer]'))).toEqual([]);
+  const testId = name => listed.report.find(e => e.method === 'onProject' && e.params.project.name === name).params.project.suites[0].entries[0].testId;
+  const serverOutput = () => stripVTControlCharacters(connection.events.filter(e => e[0] === 'report' && e[1].method === 'onStdIO').map(e => e[1].params.data).join(''));
+
+  expect(await connection.runTests({ locations: [], testIds: [testId('production')] })).toEqual({ status: 'passed' });
+  expect(serverOutput()).not.toContain('[WebServer]');
+  expect(await connection.runTests({ locations: [], testIds: [testId('local')] })).toEqual({ status: 'passed' });
+  expect(serverOutput().match(/\[WebServer\] listening/g)).toHaveLength(1);
+  await expect.poll(async () => fetch(`http://localhost:${port}`).then(() => true, () => false)).toBe(false);
+  expect(await connection.runTests({ locations: [], projects: ['local'] })).toEqual({ status: 'passed' });
+  expect(serverOutput().match(/\[WebServer\] listening/g)).toHaveLength(2);
+  expect((await connection.runGlobalTeardown({})).status).toBe('passed');
 });
 
 test('find related test files errors', async ({ startTestServer, writeFiles }) => {

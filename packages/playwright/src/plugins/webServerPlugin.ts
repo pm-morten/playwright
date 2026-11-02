@@ -27,6 +27,7 @@ import { launchProcess } from '@utils/processLauncher';
 
 import type { TestRunnerPlugin } from '.';
 import type { FullConfig } from '../../types/testReporter';
+import type { FullProject } from '../../types/test';
 import type { FullConfigInternal } from '../common';
 import type { ReporterV2 } from '../reporters/reporterV2';
 
@@ -260,9 +261,16 @@ export const webServer = (options: WebServerPluginOptions): TestRunnerPlugin => 
 };
 
 export const webServerPluginsForConfig = (config: FullConfigInternal): TestRunnerPlugin[] => {
-  const shouldSetBaseUrl = !!config.config.webServer;
+  return webServerPluginsForServers(config.webServers, !!config.config.webServer);
+};
+
+export const webServerPluginsForProject = (project: FullProject): TestRunnerPlugin[] => {
+  return webServerPluginsForServers(project.webServer, false);
+};
+
+function webServerPluginsForServers(webServers: FullProject['webServer'], shouldSetBaseUrl: boolean): TestRunnerPlugin[] {
   const webServerPlugins = [];
-  for (const webServerConfig of config.webServers) {
+  for (const webServerConfig of webServers) {
     if (webServerConfig.port && webServerConfig.url)
       throw new Error(`Either 'port' or 'url' should be specified in config.webServer.`);
 
@@ -278,7 +286,7 @@ export const webServerPluginsForConfig = (config: FullConfigInternal): TestRunne
   }
 
   return webServerPlugins;
-};
+}
 
 function prefixOutputLines(output: string, prefixName: string = 'WebServer'): string {
   const lastIsNewLine = output[output.length - 1] === '\n';
