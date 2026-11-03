@@ -6,6 +6,12 @@ toc_max_heading_level: 2
 
 import LiteYouTube from '@site/src/components/LiteYouTube';
 
+## Version 1.65
+
+### Breaking Changes
+
+- Fixed a bug where zero-delay timers scheduled during page load could fire even after [`method: Clock.pauseAt`]. These timers now remain pending until the clock is advanced. Use `await page.Clock.RunForAsync(0)` to run due timers, or pause the clock after the page has loaded.
+
 ## Version 1.64
 
 ### 🧰 WebMCP
@@ -2348,5 +2354,4 @@ This version of Playwright was also tested against the following stable channels
 
 - Google Chrome 91
 - Microsoft Edge 91
-
 
